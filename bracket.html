@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>16-Item Bracket</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #f6f7fb; color: #111; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 20px; }
+    header { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    h1 { font-size: 20px; margin: 0; }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    select, button {
+      font-size: 14px; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid #d0d3db; background: white; cursor: pointer;
+    }
+    button.primary { border-color: #111; background: #111; color: #fff; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .card {
+      margin-top: 14px; background: white; border: 1px solid #e3e5ec; border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+    .meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; }
+    .round { font-weight: 700; }
+    .note { color: #444; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+    .match {
+      border: 1px solid #e7e8ee; border-radius: 14px; padding: 12px;
+      background: #fbfbfe;
+    }
+    .match h3 { margin: 0 0 10px 0; font-size: 14px; color: #333; }
+    .option {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px; border-radius: 12px; border: 1px solid #e1e3ea;
+      background: white; margin-top: 8px;
+    }
+    .option input { transform: scale(1.1); }
+    .option span { font-size: 15px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .winner {
+      margin-top: 14px; padding: 14px; border-radius: 14px;
+      border: 1px solid #d8e7d8; background: #f1fbf1;
+    }
+    .winner strong { font-size: 18px; }
+    .error { margin-top: 14px; padding: 12px; border-radius: 12px; border: 1px solid #f0c3c3; background: #fff1f1; color: #7a0b0b; }
+    .small { font-size: 12px; color: #666; }
+    footer { margin-top: 16px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>16-Item Bracket</h1>
+      <div class="controls">
+        <label>
+          <span class="small">Choose list:</span><br />
+          <select id="listSelect"></select>
+        </label>
+        <button id="loadBtn" class="primary">Load list</button>
+        <button id="reshuffleBtn" title="Randomize pairings again" disabled>New random bracket</button>
+        <button id="restartBtn" title="Restart bracket with same initial random order" disabled>Restart</button>
+      </div>
+    </header>
+
+    <div id="status" class="card">
+      <div class="meta">
+        <div class="round" id="roundLabel">Not loaded</div>
+        <div class="note" id="roundNote">Pick a list and click “Load list”.</div>
+      </div>
+      <div id="content"></div>
+      <div id="error" class="error" style="display:none;"></div>
+    </div>
+
+    <footer>
+      Tip: Keep each list tab at exactly 16 items in column A (A1–A16), no header row.
+    </footer>
+  </div>
+
+<script>
+/**
+ * 1) Put your list names + published CSV URLs here.
+ *    - Each URL should return just the items (one per row) from the tab.
+ *    - Example URL pattern:
+ *      https://docs.google.com/spreadsheets/d/e/<PUBLISHED_ID>/pub?gid=<GID>&single=true&output=csv
+ */
+const LISTS = {
+  // Replace these with your real lists:
+  "Pasta": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdGkOCuweMzfJRChI62sqptoS3ltAOpxcJeh7UDSNlSnRcAPRaYxffJfjXsolj3cSBX8c-nvTztKx/pub?output=csv",
+  "Pizza": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdGkOCuweMzfJRChI62sqptoS3ltAOpxcJeh7UDSNlSnRcAPRaYxffJfjXsolj3cSBX8c-nvTztKx/pub?output=csv"
+};
+
+const ROUND_NAMES = {
+  16: "Round of 16",
+  8: "Quarterfinals",
+  4: "Semifinals",
+  2: "Final"
+};
+
+const elList = document.getElementById("listSelect");
+const elLoad = document.getElementById("loadBtn");
+const elReshuffle = document.getElementById("reshuffleBtn");
+const elRestart = document.getElementById("restartBtn");
+const elRoundLabel = document.getElementById("roundLabel");
+const elRoundNote = document.getElementById("roundNote");
+const elContent = document.getElementById("content");
+const elError = document.getElementById("error");
+
+let initialItems = [];     // the randomized starting 16
+let currentItems = [];     // current round items
+let currentWinners = [];   // winners chosen this round
+let roundSize = 0;
+let lastLoadedKey = null;
+
+// Populate dropdown
+(function initDropdown(){
+  const keys = Object.keys(LISTS);
+  if (keys.length === 0) {
+    showError("No lists configured. Edit the LISTS object in the HTML and add your CSV URLs.");
+    return;
+  }
+  keys.forEach(k => {
+    const opt = document.createElement("option");
+    opt.value = k; opt.textContent = k;
+    elList.appendChild(opt);
+  });
+})();
+
+function showError(msg) {
+  elError.style.display = "block";
+  elError.textContent = msg;
+}
+function clearError() {
+  elError.style.display = "none";
+  elError.textContent = "";
+}
+
+function shuffle(array) {
+  // Fisher-Yates
+  const a = array.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+async function fetchCSV(url) {
+  // Bust cache a bit
+  const cacheBuster = (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+  const res = await fetch(url + cacheBuster);
+  if (!res.ok) throw new Error(`Fetch failed (${res.status}). Check that the sheet is published and the URL is correct.`);
+  return await res.text();
+}
+
+function parseItemsFromCSV(csvText) {
+  // Simple: one item per row in column A; we ignore commas by taking first cell.
+  const lines = csvText
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  const items = lines.map(line => {
+    // Take first CSV cell; handle quoted values loosely
+    let cell = line;
+    if (cell.startsWith('"')) {
+      // crude unquote: take until last quote
+      const lastQuote = cell.lastIndexOf('"');
+      if (lastQuote > 0) cell = cell.slice(1, lastQuote);
+    } else if (cell.includes(",")) {
+      cell = cell.split(",")[0];
+    }
+    return cell.trim();
+  }).filter(Boolean);
+
+  // De-duplicate while preserving order
+  const seen = new Set();
+  const unique = [];
+  for (const it of items) {
+    const key = it.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(it);
+    }
+  }
+  return unique;
+}
+
+function setButtonsEnabled(loaded) {
+  elReshuffle.disabled = !loaded;
+  elRestart.disabled = !loaded;
+}
+
+function startBracket(items16) {
+  initialItems = items16.slice();
+  currentItems = items16.slice();
+  roundSize = currentItems.length;
+  renderRound();
+  setButtonsEnabled(true);
+}
+
+function resetToInitialSameOrder() {
+  currentItems = initialItems.slice();
+  roundSize = currentItems.length;
+  renderRound();
+}
+
+function resetToNewRandom() {
+  initialItems = shuffle(initialItems);
+  currentItems = initialItems.slice();
+  roundSize = currentItems.length;
+  renderRound();
+}
+
+function renderRound() {
+  clearError();
+  elContent.innerHTML = "";
+  currentWinners = [];
+
+  roundSize = currentItems.length;
+
+  if (roundSize === 1) {
+    const win = document.createElement("div");
+    win.className = "winner";
+    win.innerHTML = `🏆 Winner: <strong>${escapeHtml(currentItems[0])}</strong>`;
+    elRoundLabel.textContent = "Complete";
+    elRoundNote.textContent = "You can restart or randomize a new bracket.";
+    elContent.appendChild(win);
+    return;
+  }
+
+  if (![16, 8, 4, 2].includes(roundSize)) {
+    showError(`Unexpected round size: ${roundSize}. This tool expects 16 items and halves each round.`);
+    return;
+  }
+
+  const roundName = ROUND_NAMES[roundSize] || `Round (${roundSize})`;
+  elRoundLabel.textContent = roundName;
+  elRoundNote.textContent = `Choose a winner for each matchup, then click “Advance”.`;
+
+  const grid = document.createElement("div");
+  grid.className = "grid";
+
+  // Create matchups in pairs
+  for (let i = 0; i < currentItems.length; i += 2) {
+    const a = currentItems[i];
+    const b = currentItems[i + 1];
+
+    const match = document.createElement("div");
+    match.className = "match";
+    match.innerHTML = `<h3>Matchup ${i/2 + 1}</h3>`;
+
+    const name = `m_${roundSize}_${i/2}`;
+
+    match.appendChild(makeOption(name, a, i/2, a));
+    match.appendChild(makeOption(name, b, i/2, b));
+
+    grid.appendChild(match);
+  }
+
+  elContent.appendChild(grid);
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  const advanceBtn = document.createElement("button");
+  advanceBtn.className = "primary";
+  advanceBtn.textContent = "Advance";
+  advanceBtn.onclick = () => advanceRound();
+  actions.appendChild(advanceBtn);
+
+  const status = document.createElement("div");
+  status.className = "note";
+  status.id = "pickStatus";
+  status.textContent = `0 / ${currentItems.length / 2} matchups decided`;
+  actions.appendChild(status);
+
+  elContent.appendChild(actions);
+
+  // Listen for changes to update status
+  elContent.addEventListener("change", updatePickStatus, { once: true, capture: true });
+  // Also do a first update
+  updatePickStatus();
+}
+
+function makeOption(groupName, label, matchIndex, value) {
+  const wrap = document.createElement("label");
+  wrap.className = "option";
+  wrap.innerHTML = `
+    <input type="radio" name="${groupName}" value="${escapeAttr(value)}" />
+    <span>${escapeHtml(label)}</span>
+  `;
+  wrap.querySelector("input").addEventListener("change", () => {
+    currentWinners[matchIndex] = value;
+    updatePickStatus();
+  });
+  return wrap;
+}
+
+function updatePickStatus() {
+  const total = currentItems.length / 2;
+  const decided = currentWinners.filter(Boolean).length;
+  const status = document.getElementById("pickStatus");
+  if (status) status.textContent = `${decided} / ${total} matchups decided`;
+}
+
+function advanceRound() {
+  clearError();
+  const total = currentItems.length / 2;
+  const decided = currentWinners.filter(Boolean).length;
+  if (decided !== total) {
+    showError(`Please pick a winner for all matchups (${decided}/${total} decided).`);
+    return;
+  }
+  currentItems = currentWinners.slice(); // winners advance
+  renderRound();
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, s => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[s]));
+}
+function escapeAttr(str) {
+  // For attribute values; keep it simple
+  return escapeHtml(str).replace(/`/g, "&#96;");
+}
+
+elLoad.onclick = async () => {
+  clearError();
+  const key = elList.value;
+  const url = LISTS[key];
+  lastLoadedKey = key;
+
+  elRoundLabel.textContent = "Loading…";
+  elRoundNote.textContent = "Fetching list from Google Sheets…";
+  elContent.innerHTML = "";
+
+  try {
+    if (!url || url.includes("PASTE_CSV_URL")) {
+      throw new Error("You haven’t pasted your CSV URL(s) into the LISTS object yet.");
+    }
+    const csv = await fetchCSV(url);
+    const items = parseItemsFromCSV(csv);
+
+    if (items.length !== 16) {
+      throw new Error(`Expected 16 items, but found ${items.length}. Make sure the tab has exactly 16 non-empty cells in column A (A1–A16).`);
+    }
+
+    startBracket(shuffle(items));
+  } catch (e) {
+    elRoundLabel.textContent = "Error";
+    elRoundNote.textContent = "Fix the issue and try again.";
+    showError(e.message || String(e));
+    setButtonsEnabled(false);
+  }
+};
+
+elReshuffle.onclick = () => {
+  if (!initialItems.length) return;
+  resetToNewRandom();
+};
+
+elRestart.onclick = () => {
+  if (!initialItems.length) return;
+  resetToInitialSameOrder();
+};
+</script>
+</body>
+</html>
