@@ -85,11 +85,15 @@
  *    - Example URL pattern:
  *      https://docs.google.com/spreadsheets/d/e/<PUBLISHED_ID>/pub?gid=<GID>&single=true&output=csv
  */
+// Base published URL (everything before ?gid= )
+const SHEET_BASE =
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdGkOCuweMzfJRChI62sqptoS3ltAOpxcJeh7UDSNlSnRcAPRaYxffJfjXsolj3cSBX8c-nvTztKx/pub";
+
+// Only store gid values here
 const LISTS = {
-  // Replace these with your real lists:
-  "Pasta": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdGkOCuweMzfJRChI62sqptoS3ltAOpxcJeh7UDSNlSnRcAPRaYxffJfjXsolj3cSBX8c-nvTztKx/pub?output=csv",
-  "Pizza": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdGkOCuweMzfJRChI62sqptoS3ltAOpxcJeh7UDSNlSnRcAPRaYxffJfjXsolj3cSBX8c-nvTztKx/pub?gid=2076774555&output=csv",
-  "User Defined": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdGkOCuweMzfJRChI62sqptoS3ltAOpxcJeh7UDSNlSnRcAPRaYxffJfjXsolj3cSBX8c-nvTztKx/pub?output=csv"
+  "Pasta": 0,
+  "Pizza": 2076774555,
+  "User Defined": 134458480
 };
 
 const ROUND_NAMES = {
@@ -331,7 +335,8 @@ function escapeAttr(str) {
 elLoad.onclick = async () => {
   clearError();
   const key = elList.value;
-  const url = LISTS[key];
+  const gid = LISTS[key];
+const url = `${SHEET_BASE}?gid=${gid}&single=true&output=csv`;
   lastLoadedKey = key;
 
   elRoundLabel.textContent = "Loading…";
